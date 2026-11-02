@@ -1,15 +1,3 @@
-//! Scene graph: layers with stable IDs.
-//!
-//! Layers live in a map keyed by [`LayerId`]; the hierarchy is stored as
-//! ordered child lists (`root` and each group's `children`). IDs are
-//! allocated monotonically and never reused, so references from masks,
-//! behaviours, template parameters and undo commands stay valid when layers
-//! are reordered or regrouped.
-//!
-//! Coordinates are canvas pixels with the origin at the canvas centre and
-//! +y pointing down. Child lists are ordered bottom-to-top: index 0 is drawn
-//! first.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
@@ -17,6 +5,8 @@ use std::path::PathBuf;
 use glam::{Affine2, Vec2};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::animation::{Animation, Channel};
 
 /// Maximum nesting depth honoured when traversing the hierarchy.
 const MAX_DEPTH: usize = 256;
@@ -136,6 +126,8 @@ pub struct LayerProps {
     pub opacity: f32,
     pub transform: Transform2D,
     pub kind: LayerKind,
+    #[serde(default)]
+    pub animation: Animation,
 }
 
 impl LayerProps {
@@ -146,7 +138,54 @@ impl LayerProps {
             opacity: 1.0,
             transform: Transform2D::default(),
             kind,
+            animation: Animation::default(),
         }
+    }
+
+    /// Un-animated value of `channel`.
+    pub fn static_value(&self, channel: Channel) -> f32 {
+        let t = &self.transform;
+        match channel {
+            Channel::PositionX => t.position.x,
+            Channel::PositionY => t.position.y,
+            Channel::ScaleX => t.scale.x,
+            Channel::ScaleY => t.scale.y,
+            Channel::Rotation => t.rotation_deg,
+            Channel::Opacity => self.opacity,
+        }
+    }
+
+    pub fn set_static_value(&mut self, channel: Channel, value: f32) {
+        let t = &mut self.transform;
+        match channel {
+            Channel::PositionX => t.position.x = value,
+            Channel::PositionY => t.position.y = value,
+            Channel::ScaleX => t.scale.x = value,
+            Channel::ScaleY => t.scale.y = value,
+            Channel::Rotation => t.rotation_deg = value,
+            Channel::Opacity => self.opacity = value.clamp(0.0, 1.0),
+        }
+    }
+}
+
+/// Supplies the transform and opacity of a layer, e.g. evaluated at a
+/// point in time.
+pub trait Resolver {
+    fn transform(&self, layer: &Layer) -> Transform2D;
+    fn opacity(&self, layer: &Layer) -> f32;
+}
+
+/// Uses the stored, un-animated values.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StaticValues;
+
+impl Resolver for StaticValues {
+    fn transform(&self, layer: &Layer) -> Transform2D {
+        layer.props.transform.clone()
+    }
+
+    fn opacity(&self, layer: &Layer) -> f32 {
+        layer.props.opacity
     }
 }
 
@@ -192,6 +231,8 @@ pub struct DrawItem<'a> {
     pub kind: &'a LayerKind,
 }
 
+/// Layer hierarchy. Coordinates are canvas pixels with the origin at the
+/// canvas centre and +y down; child lists are ordered bottom to top.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
     layers: BTreeMap<LayerId, Layer>,
@@ -408,15 +449,20 @@ impl Scene {
         Ok(std::mem::replace(&mut l.props, props))
     }
 
-    /// Content space → canvas space for `id`.
+    /// Content space → canvas space for `id`, using stored values.
     pub fn world_transform(&self, id: LayerId) -> Option<Affine2> {
+        self.world_transform_with(id, &StaticValues)
+    }
+
+    /// Content space → canvas space for `id`.
+    pub fn world_transform_with<R: Resolver + ?Sized>(&self, id: LayerId, r: &R) -> Option<Affine2> {
         let layer = self.layers.get(&id)?;
-        let mut m = layer.props.transform.to_affine();
+        let mut m = r.transform(layer).to_affine();
         let mut cur = layer.parent;
         for _ in 0..MAX_DEPTH {
             let Some(p) = cur else { break };
             let l = self.layers.get(&p)?;
-            m = l.props.transform.to_affine() * m;
+            m = r.transform(l).to_affine() * m;
             cur = l.parent;
         }
         Some(m)
@@ -424,22 +470,32 @@ impl Scene {
 
     /// World transform of the parent (identity for top-level layers).
     pub fn parent_world(&self, id: LayerId) -> Affine2 {
+        self.parent_world_with(id, &StaticValues)
+    }
+
+    pub fn parent_world_with<R: Resolver + ?Sized>(&self, id: LayerId, r: &R) -> Affine2 {
         self.layers
             .get(&id)
             .and_then(|l| l.parent)
-            .and_then(|p| self.world_transform(p))
+            .and_then(|p| self.world_transform_with(p, r))
             .unwrap_or(Affine2::IDENTITY)
     }
 
-    /// Visible drawable layers in draw order (bottom first).
+    /// Visible drawable layers in draw order (bottom first), using stored values.
     pub fn flatten(&self) -> Vec<DrawItem<'_>> {
+        self.flatten_with(&StaticValues)
+    }
+
+    /// Visible drawable layers in draw order (bottom first).
+    pub fn flatten_with<R: Resolver + ?Sized>(&self, r: &R) -> Vec<DrawItem<'_>> {
         let mut out = Vec::new();
-        self.flatten_into(&self.root, Affine2::IDENTITY, 1.0, 0, &mut out);
+        self.flatten_into(r, &self.root, Affine2::IDENTITY, 1.0, 0, &mut out);
         out
     }
 
-    fn flatten_into<'a>(
+    fn flatten_into<'a, R: Resolver + ?Sized>(
         &'a self,
+        r: &R,
         ids: &[LayerId],
         parent: Affine2,
         parent_opacity: f32,
@@ -456,10 +512,10 @@ impl Scene {
             if !l.props.visible {
                 continue;
             }
-            let world = parent * l.props.transform.to_affine();
-            let opacity = parent_opacity * l.props.opacity.clamp(0.0, 1.0);
+            let world = parent * r.transform(l).to_affine();
+            let opacity = parent_opacity * r.opacity(l).clamp(0.0, 1.0);
             if l.props.kind.is_group() {
-                self.flatten_into(&l.children, world, opacity, depth + 1, out);
+                self.flatten_into(r, &l.children, world, opacity, depth + 1, out);
             } else {
                 out.push(DrawItem {
                     id: *id,
@@ -471,9 +527,14 @@ impl Scene {
         }
     }
 
-    /// Topmost visible layer whose content contains canvas point `p`.
+    /// Topmost visible layer at canvas point `p`, using stored values.
     pub fn hit_test(&self, p: Vec2) -> Option<LayerId> {
-        self.flatten()
+        self.hit_test_with(p, &StaticValues)
+    }
+
+    /// Topmost visible layer whose content contains canvas point `p`.
+    pub fn hit_test_with<R: Resolver + ?Sized>(&self, p: Vec2, r: &R) -> Option<LayerId> {
+        self.flatten_with(r)
             .iter()
             .rev()
             .find(|item| {

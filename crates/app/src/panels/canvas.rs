@@ -3,6 +3,7 @@ use eframe::egui::{
     StrokeKind,
 };
 use lumen_core::glam::Vec2;
+use lumen_anim::AtTime;
 use lumen_core::LayerId;
 
 use crate::app::LumenApp;
@@ -95,20 +96,24 @@ fn handle_at(app: &LumenApp, id: LayerId, screen: Vec2, view: View) -> Option<Dr
     let scene = &app.project.scene;
     let layer = scene.layer(id)?;
     let size = layer.props.kind.content_size()?;
-    let world = scene.world_transform(id)?;
+    let world = scene.world_transform_with(id, &AtTime(app.time()))?;
     let shape = gizmo::shape(world, size, layer.props.transform.anchor, view);
     gizmo::pick_handle(&shape, size, screen)
 }
 
 fn begin_drag(app: &mut LumenApp, id: LayerId, mode: DragMode, pointer: Vec2) {
+    let time = app.time();
     let scene = &app.project.scene;
     let Some(layer) = scene.layer(id) else { return };
+    let (start_transform, start_opacity) = lumen_anim::evaluate(&layer.props, time);
     app.gizmo_drag = Some(GizmoDrag {
         id,
         mode,
         start_props: layer.props.clone(),
+        start_transform,
+        start_opacity,
         start_pointer: pointer,
-        parent_world: scene.parent_world(id),
+        parent_world: scene.parent_world_with(id, &AtTime(time)),
     });
 }
 
@@ -123,7 +128,7 @@ fn press(app: &mut LumenApp, screen: Vec2, view: View, start_drag: bool) {
         }
     }
     let scene = &app.project.scene;
-    match scene.hit_test(canvas_pt) {
+    match scene.hit_test_with(canvas_pt, &AtTime(app.time())) {
         Some(hit) => {
             // Keep a selected group selected when clicking one of its children.
             let target = match app.selection {
@@ -156,7 +161,13 @@ fn handle_input(app: &mut LumenApp, ui: &egui::Ui, resp: &egui::Response, view: 
         if let (Some(drag), Some(pos)) = (app.gizmo_drag.clone(), resp.interact_pointer_pos()) {
             let transform = gizmo::apply_drag(&drag, view.to_canvas(v(pos)), shift);
             let mut props = drag.start_props.clone();
-            props.transform = transform;
+            lumen_anim::write_transform(
+                &mut props,
+                (&drag.start_transform, drag.start_opacity),
+                (&transform, drag.start_opacity),
+                app.time(),
+                app.record,
+            );
             app.modify_layer(drag.id, props);
         }
     }
@@ -178,7 +189,12 @@ fn handle_input(app: &mut LumenApp, ui: &egui::Ui, resp: &egui::Response, view: 
             match handle {
                 Some(DragMode::Rotate) => Some(CursorIcon::Alias),
                 Some(_) => Some(CursorIcon::Crosshair),
-                None if app.project.scene.hit_test(view.to_canvas(v(pos))).is_some() => {
+                None if app
+                    .project
+                    .scene
+                    .hit_test_with(view.to_canvas(v(pos)), &AtTime(app.time()))
+                    .is_some() =>
+                {
                     Some(CursorIcon::Grab)
                 }
                 None => None,
@@ -193,7 +209,10 @@ fn handle_input(app: &mut LumenApp, ui: &egui::Ui, resp: &egui::Response, view: 
 
 fn draw_gizmo(app: &LumenApp, painter: &egui::Painter, id: LayerId, view: View) {
     let scene = &app.project.scene;
-    let (Some(layer), Some(world)) = (scene.layer(id), scene.world_transform(id)) else {
+    let (Some(layer), Some(world)) = (
+        scene.layer(id),
+        scene.world_transform_with(id, &AtTime(app.time())),
+    ) else {
         return;
     };
     let accent = Stroke::new(1.5_f32, theme::ACCENT);

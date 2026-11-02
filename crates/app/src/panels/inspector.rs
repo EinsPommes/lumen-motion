@@ -1,6 +1,8 @@
 use eframe::egui::{self, DragValue, RichText};
 use lumen_core::project::MAX_DIMENSION;
-use lumen_core::{FrameRate, LayerId, LayerKind, SetProjectSettings, Time};
+use lumen_core::{
+    Channel, FrameRate, LayerId, LayerKind, LayerProps, SetProjectSettings, Time, Transform2D,
+};
 
 use crate::app::{InspectorTab, LumenApp};
 use crate::theme;
@@ -26,18 +28,15 @@ pub fn show(app: &mut LumenApp, ctx: &egui::Context) {
                 match (app.inspector_tab, app.selection) {
                     (InspectorTab::Properties, Some(id)) => layer_properties(app, ui, id),
                     (InspectorTab::Properties, None) => project_properties(app, ui),
-                    (InspectorTab::Behaviours, _) => placeholder(ui, "Behaviours", 5),
-                    (InspectorTab::Filters, _) => placeholder(ui, "Filters", 6),
+                    (InspectorTab::Behaviours, _) => placeholder(ui, "No behaviours applied."),
+                    (InspectorTab::Filters, _) => placeholder(ui, "No filters applied."),
                 }
             });
         });
 }
 
-fn placeholder(ui: &mut egui::Ui, what: &str, milestone: u8) {
-    ui.label(
-        RichText::new(format!("{what} arrive in milestone {milestone}."))
-            .color(theme::TEXT_WEAK),
-    );
+fn placeholder(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).color(theme::TEXT_WEAK));
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {
@@ -60,55 +59,117 @@ fn xy(ui: &mut egui::Ui, x: &mut f32, y: &mut f32, speed: f32, suffix: &str) -> 
     .inner
 }
 
+const POSITION: &[Channel] = &[Channel::PositionX, Channel::PositionY];
+const SCALE: &[Channel] = &[Channel::ScaleX, Channel::ScaleY];
+const ROTATION: &[Channel] = &[Channel::Rotation];
+const OPACITY: &[Channel] = &[Channel::Opacity];
+const TRANSFORM: &[Channel] = &[
+    Channel::PositionX,
+    Channel::PositionY,
+    Channel::ScaleX,
+    Channel::ScaleY,
+    Channel::Rotation,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyState {
+    Static,
+    Animated,
+    Keyed,
+}
+
+fn key_state(props: &LayerProps, channels: &[Channel], time: Time) -> KeyState {
+    let anim = &props.animation;
+    if channels.iter().all(|ch| anim.has_key(*ch, time)) {
+        KeyState::Keyed
+    } else if channels.iter().any(|ch| anim.is_animated(*ch)) {
+        KeyState::Animated
+    } else {
+        KeyState::Static
+    }
+}
+
+/// Keyframe toggle shown in front of an animatable property.
+fn key_button(ui: &mut egui::Ui, state: KeyState) -> bool {
+    let (glyph, color, tip) = match state {
+        KeyState::Keyed => ("◆", theme::ACCENT, "Remove keyframe"),
+        KeyState::Animated => ("◇", theme::ACCENT, "Add keyframe"),
+        KeyState::Static => ("◇", theme::TEXT_WEAK, "Add keyframe"),
+    };
+    ui.add(egui::Button::new(RichText::new(glyph).color(color)).frame(false))
+        .on_hover_text(tip)
+        .clicked()
+}
+
 fn layer_properties(app: &mut LumenApp, ui: &mut egui::Ui, id: LayerId) {
     let Some(original) = app.project.scene.layer(id).map(|l| l.props.clone()) else {
         return;
     };
+    let time = app.time();
+    let (eval_t, eval_opacity) = lumen_anim::evaluate(&original, time);
     let mut p = original.clone();
+    let mut t = eval_t.clone();
+    let mut opacity = eval_opacity;
+    let mut toggles: Vec<&'static [Channel]> = Vec::new();
+    let mut reset = false;
 
     ui.horizontal(|ui| {
         ui.label(RichText::new(p.kind.type_name()).strong().color(theme::ACCENT));
         ui.label(RichText::new(id.to_string()).small().color(theme::TEXT_WEAK));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Project").on_hover_text("Show project settings (Esc)").clicked() {
+            if ui
+                .small_button("Project")
+                .on_hover_text("Show project settings (Esc)")
+                .clicked()
+            {
                 app.selection = None;
             }
         });
     });
 
     egui::Grid::new("layer_basic")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
+        .num_columns(3)
+        .spacing([6.0, 8.0])
         .show(ui, |ui| {
+            ui.label("");
             ui.label("Name");
             ui.add(egui::TextEdit::singleline(&mut p.name).desired_width(f32::INFINITY));
             ui.end_row();
 
+            ui.label("");
             ui.label("Visible");
             ui.checkbox(&mut p.visible, "");
             ui.end_row();
 
+            if key_button(ui, key_state(&original, OPACITY, time)) {
+                toggles.push(OPACITY);
+            }
             ui.label("Opacity");
-            let mut pct = p.opacity * 100.0;
+            let mut pct = opacity * 100.0;
             if ui
                 .add(egui::Slider::new(&mut pct, 0.0..=100.0).suffix(" %").max_decimals(0))
                 .changed()
             {
-                p.opacity = (pct / 100.0).clamp(0.0, 1.0);
+                opacity = (pct / 100.0).clamp(0.0, 1.0);
             }
             ui.end_row();
         });
 
     section(ui, "Transform");
     egui::Grid::new("layer_transform")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
+        .num_columns(3)
+        .spacing([6.0, 8.0])
         .show(ui, |ui| {
-            let t = &mut p.transform;
+            if key_button(ui, key_state(&original, POSITION, time)) {
+                toggles.push(POSITION);
+            }
             ui.label("Position");
             xy(ui, &mut t.position.x, &mut t.position.y, 1.0, " px");
             ui.end_row();
 
+            if key_button(ui, key_state(&original, SCALE, time)) {
+                toggles.push(SCALE);
+            }
             ui.label("Scale");
             let mut sx = t.scale.x * 100.0;
             let mut sy = t.scale.y * 100.0;
@@ -118,16 +179,24 @@ fn layer_properties(app: &mut LumenApp, ui: &mut egui::Ui, id: LayerId) {
             }
             ui.end_row();
 
+            if key_button(ui, key_state(&original, ROTATION, time)) {
+                toggles.push(ROTATION);
+            }
             ui.label("Rotation");
             ui.add(DragValue::new(&mut t.rotation_deg).speed(0.5).suffix("°").max_decimals(2));
             ui.end_row();
 
+            ui.label("");
             ui.label("Anchor");
             xy(ui, &mut t.anchor.x, &mut t.anchor.y, 1.0, " px");
             ui.end_row();
         });
-    if ui.small_button("Reset Transform").clicked() {
-        p.transform = Default::default();
+    if ui
+        .small_button("Reset Transform")
+        .on_hover_text("Clears transform keyframes and restores defaults")
+        .clicked()
+    {
+        reset = true;
     }
 
     match &mut p.kind {
@@ -149,7 +218,12 @@ fn layer_properties(app: &mut LumenApp, ui: &mut egui::Ui, id: LayerId) {
                     ui.end_row();
 
                     ui.label("Corner Radius");
-                    ui.add(DragValue::new(corner_radius).speed(0.5).range(0.0..=10_000.0).suffix(" px"));
+                    ui.add(
+                        DragValue::new(corner_radius)
+                            .speed(0.5)
+                            .range(0.0..=10_000.0)
+                            .suffix(" px"),
+                    );
                     ui.end_row();
 
                     ui.label("Color");
@@ -179,8 +253,33 @@ fn layer_properties(app: &mut LumenApp, ui: &mut egui::Ui, id: LayerId) {
         }
     }
 
+    if reset {
+        for ch in TRANSFORM {
+            p.animation.clear_channel(*ch);
+        }
+        p.transform = Transform2D::default();
+    } else {
+        lumen_anim::write_transform(
+            &mut p,
+            (&eval_t, eval_opacity),
+            (&t, opacity),
+            time,
+            app.record,
+        );
+    }
+    let discrete = reset || !toggles.is_empty();
+    for channels in toggles {
+        lumen_anim::toggle_keys(&mut p, channels, time);
+    }
+
     if p != original {
+        if discrete {
+            app.history.seal();
+        }
         app.modify_layer(id, p);
+        if discrete {
+            app.history.seal();
+        }
         ui.ctx().request_repaint();
     }
 }

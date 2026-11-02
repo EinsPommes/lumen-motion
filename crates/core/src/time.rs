@@ -1,10 +1,3 @@
-//! Rational time model.
-//!
-//! All times are exact fractions of a second ([`Time`]); frame rates are
-//! exact fractions too ([`FrameRate`], e.g. `30000/1001` for 29.97 fps).
-//! This avoids floating-point drift when converting between frames and
-//! seconds, and lets a project change its frame rate without losing timing.
-
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -360,7 +353,7 @@ impl FrameRange {
 /// Formats a frame index as non-drop timecode `HH:MM:SS:FF`.
 ///
 /// For fractional rates (29.97 …) the nominal integer rate is used, as in
-/// standard non-drop-frame timecode. Drop-frame timecode follows later.
+/// standard non-drop-frame timecode.
 pub fn format_timecode(frame: i64, rate: FrameRate) -> String {
     let fps = u64::from(rate.nominal().max(1));
     let sign = if frame < 0 { "-" } else { "" };

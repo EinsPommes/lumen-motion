@@ -1,10 +1,3 @@
-//! Undo/redo via the command pattern.
-//!
-//! Every mutation of a [`Project`] goes through a [`Command`] executed by a
-//! [`History`]. Continuous edits (slider drags, colour pickers) are merged
-//! into one undo step until the history is [sealed](History::seal), which the
-//! UI does when the pointer is released.
-
 use std::any::Any;
 use std::collections::VecDeque;
 use std::fmt;

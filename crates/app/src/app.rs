@@ -6,12 +6,13 @@ use eframe::egui_wgpu::wgpu;
 use lumen_core::glam::Vec2;
 use lumen_core::time::{self, LoopMode};
 use lumen_core::{
-    AddLayer, Command, FrameRange, History, LayerId, LayerKind, LayerProps, ModifyLayer,
-    MoveLayer, Project, RemoveLayer,
+    AddLayer, Channel, Command, FrameRange, History, LayerId, LayerKind, LayerProps, ModifyLayer,
+    MoveLayer, Project, RemoveLayer, Time,
 };
 use lumen_render::{CanvasRenderer, FrameParams};
 
 use crate::gizmo::GizmoDrag;
+use crate::panels::timeline::KeyDrag;
 use crate::{panels, theme};
 
 pub const UNDO: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
@@ -86,6 +87,9 @@ pub struct LumenApp {
     pub inspector_tab: InspectorTab,
     pub selection: Option<LayerId>,
     pub gizmo_drag: Option<GizmoDrag>,
+    pub key_drag: Option<KeyDrag>,
+    /// When set, edits to static channels create keyframes.
+    pub record: bool,
     /// Last error shown in the status area.
     pub status: Option<String>,
     pub gpu_info: String,
@@ -117,6 +121,8 @@ impl LumenApp {
             inspector_tab: InspectorTab::default(),
             selection: None,
             gizmo_drag: None,
+            key_drag: None,
+            record: false,
             status: None,
             gpu_info: format!("{} · {:?}", info.name, info.backend),
             file_path: None,
@@ -371,6 +377,8 @@ impl LumenApp {
         self.history.clear();
         self.selection = None;
         self.gizmo_drag = None;
+        self.key_drag = None;
+        self.record = false;
         self.transport.playing = false;
         self.playhead = 0;
         self.dirty = false;
@@ -458,6 +466,29 @@ impl LumenApp {
 
     // --- transport -------------------------------------------------------
 
+    /// Time of the current playhead frame.
+    pub fn time(&self) -> Time {
+        Time::from_frame(self.playhead, self.project.settings.frame_rate).unwrap_or(Time::ZERO)
+    }
+
+    /// Jumps to the previous (`forward == false`) or next keyframe of the
+    /// selected layer.
+    pub fn jump_to_key(&mut self, forward: bool) {
+        let Some(layer) = self.selection.and_then(|id| self.project.scene.layer(id)) else {
+            return;
+        };
+        let anim = &layer.props.animation;
+        let now = self.time();
+        let target = if forward {
+            anim.next_key(&Channel::ALL, now)
+        } else {
+            anim.previous_key(&Channel::ALL, now)
+        };
+        if let Some(t) = target {
+            self.set_playhead(t.to_frame_round(self.project.settings.frame_rate));
+        }
+    }
+
     pub fn frame_range(&self) -> FrameRange {
         self.project.settings.frame_range()
     }
@@ -540,11 +571,20 @@ impl LumenApp {
         if pressed(Key::Space) {
             self.toggle_playback();
         }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::ArrowLeft)) {
+            self.jump_to_key(false);
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::ArrowRight)) {
+            self.jump_to_key(true);
+        }
         if pressed(Key::ArrowLeft) {
             self.step(-1);
         }
         if pressed(Key::ArrowRight) {
             self.step(1);
+        }
+        if pressed(Key::R) {
+            self.record = !self.record;
         }
         if pressed(Key::Home) {
             self.set_playhead(self.frame_range().start());
@@ -589,7 +629,7 @@ impl LumenApp {
             return;
         };
         let s = &self.project.settings;
-        let items = self.project.scene.flatten();
+        let items = self.project.scene.flatten_with(&lumen_anim::AtTime(self.time()));
         let params = FrameParams {
             width: s.width,
             height: s.height,

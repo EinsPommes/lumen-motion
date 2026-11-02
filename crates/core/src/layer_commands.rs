@@ -1,5 +1,3 @@
-//! Undoable commands operating on the scene graph.
-
 use std::any::Any;
 
 use crate::command::{Command, CommandError};

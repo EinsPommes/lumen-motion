@@ -6,8 +6,6 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-# ffmpeg-next is added in the import/export milestone: on Windows it needs
-# FFmpeg dev libraries and LLVM (bindgen), which we don't want to require yet.
 [dependencies]
 lumen-core.workspace = true
 image.workspace = true

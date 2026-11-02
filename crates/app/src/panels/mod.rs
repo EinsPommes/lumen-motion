@@ -36,7 +36,7 @@ pub fn menu_bar(app: &mut LumenApp, ctx: &egui::Context) {
                 }
                 ui.separator();
                 ui.add_enabled(false, Button::new("Export …"))
-                    .on_disabled_hover_text("Coming in milestone 10");
+                    .on_disabled_hover_text("Not available yet");
                 ui.separator();
                 if ui.button("Quit").clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

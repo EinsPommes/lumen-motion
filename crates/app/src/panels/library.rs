@@ -6,39 +6,39 @@ use crate::theme;
 
 struct Category {
     name: &'static str,
-    milestone: u8,
+    available: bool,
     items: &'static [&'static str],
 }
 
 const CATEGORIES: &[Category] = &[
     Category {
         name: "Shapes & Media",
-        milestone: 2,
+        available: true,
         items: &["Rectangle", "Image", "Group"],
     },
     Category {
         name: "Text",
-        milestone: 4,
+        available: false,
         items: &["Title", "Subtitle", "Lower Third", "Credits"],
     },
     Category {
         name: "Behaviours",
-        milestone: 5,
+        available: false,
         items: &["Throw", "Spin", "Fade In/Out", "Wiggle", "Oscillate", "Grow/Shrink"],
     },
     Category {
         name: "Filters",
-        milestone: 6,
+        available: false,
         items: &["Blur", "Glow", "Neon", "Color Correction"],
     },
     Category {
         name: "Particles",
-        milestone: 7,
+        available: false,
         items: &["Smoke", "Sparks", "Confetti", "Snow", "Rain", "Fire", "Dust", "Bubbles", "Stars", "Embers"],
     },
     Category {
         name: "Templates",
-        milestone: 11,
+        available: false,
         items: &["Titles", "Transitions", "Effects"],
     },
 ];
@@ -216,7 +216,7 @@ fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                 continue;
             }
             any = true;
-            let available = cat.milestone <= 2;
+            let available = cat.available;
             egui::CollapsingHeader::new(RichText::new(cat.name).strong())
                 .id_salt(cat.name)
                 .default_open(available)
@@ -238,7 +238,7 @@ fn library(app: &mut LumenApp, ui: &mut egui::Ui) {
                             }
                         } else {
                             ui.label(RichText::new(item).color(theme::TEXT_WEAK))
-                                .on_hover_text(format!("Available from milestone {}", cat.milestone));
+                                .on_hover_text("Coming soon");
                         }
                     }
                 });

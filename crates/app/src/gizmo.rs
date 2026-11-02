@@ -1,5 +1,3 @@
-//! Transform gizmo: geometry, hit-testing and drag math (UI-independent).
-
 use lumen_core::glam::{Affine2, Vec2};
 use lumen_core::{LayerId, LayerProps, Transform2D};
 
@@ -52,7 +50,11 @@ pub enum DragMode {
 pub struct GizmoDrag {
     pub id: LayerId,
     pub mode: DragMode,
+    /// Stored properties at drag start (edits are written relative to these).
     pub start_props: LayerProps,
+    /// Transform and opacity evaluated at the current time at drag start.
+    pub start_transform: Transform2D,
+    pub start_opacity: f32,
     /// Pointer at drag start, canvas space.
     pub start_pointer: Vec2,
     /// World transform of the layer's parent at drag start.
@@ -98,7 +100,7 @@ pub fn pick_handle(shape: &Shape, size: Vec2, pointer: Vec2) -> Option<DragMode>
 
 /// New transform for the current pointer position (canvas space).
 pub fn apply_drag(drag: &GizmoDrag, pointer: Vec2, shift: bool) -> Transform2D {
-    let t = &drag.start_props.transform;
+    let t = &drag.start_transform;
     match drag.mode {
         DragMode::Move => drag_move(t, drag.parent_world, drag.start_pointer, pointer, shift),
         DragMode::Scale { corner } => drag_scale(t, drag.parent_world, corner, pointer, shift),

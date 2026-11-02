@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use lumen_core::{DrawItem, LayerKind};
 
 /// Format of the canvas texture. sRGB storage, linear blending.
-/// Moves to `Rgba16Float` for HDR compositing in a later milestone.
 pub const CANVAS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// Format used for imported images.
@@ -29,7 +28,7 @@ pub struct FrameParams<'a> {
 
 #[derive(Debug)]
 struct Target {
-    // Kept alive for the view; also needed later for readback/export.
+    // Owns the memory behind `view`.
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
     width: u32,

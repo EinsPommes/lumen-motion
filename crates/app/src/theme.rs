@@ -1,10 +1,9 @@
-//! Lumen dark theme: graphite surfaces with a warm ember accent.
-
 use eframe::egui::{self, Color32, Stroke};
 
 pub const ACCENT: Color32 = Color32::from_rgb(255, 122, 48);
 pub const ACCENT_DIM: Color32 = Color32::from_rgb(150, 72, 30);
 pub const ERROR: Color32 = Color32::from_rgb(240, 90, 90);
+pub const RECORD: Color32 = Color32::from_rgb(232, 64, 64);
 
 pub const BG_PANEL: Color32 = Color32::from_rgb(29, 30, 34);
 pub const BG_WINDOW: Color32 = Color32::from_rgb(35, 36, 41);

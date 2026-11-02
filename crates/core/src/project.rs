@@ -1,5 +1,3 @@
-//! Versioned project document.
-
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

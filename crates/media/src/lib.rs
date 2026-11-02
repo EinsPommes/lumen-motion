@@ -1,8 +1,3 @@
-//! Media import/export and the decoded-frame cache.
-//!
-//! Milestone 2: still images (PNG, JPEG). Video I/O via FFmpeg follows in
-//! milestone 10.
-
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
